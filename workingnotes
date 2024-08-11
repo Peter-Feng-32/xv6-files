@@ -1,0 +1,49 @@
+Part 1: Copy on Write Forking
+Currently: on fork xv6 clones the parent's address space, creating a newly allocated page in the child for every page in the parent.
+
+Make the data pages follow copy-on-write semantics
+Allocate them at the time of write.
+
+On fork:
+fork is called in proc.c
+copyuvm is called in vm.c to allocate a new virtual address space for the new process
+
+pagefaults will cause traps delivered to the c trap handler trap() in trap.c
+
+Question: Doesn't the existing implementation of copyuvm imply that all pages are in order in terms of virtual addresses?  
+ie. if you have virtual address 0 and virtual address 2\*PGSize you must also have virtual address PGSize
+
+copy on write basic idea: Keep track of the number of processes referencing a single page, and disable writing.
+If try to write to a page with multiple processes referring to it, make a copy of the page instead and write to that.
+
+Think of complex relationships, such as what should happen when a parent forks two children, when a parent dies before its child, or when a parent forks a child forks a grandchild.
+
+Max number of processes: 64
+Would need to use 6 bits in
+Where to store reference count?
+Can't store in PTE's because not enough space and also PTE's are separate for different processes. Would run in trouble when process is done.
+Can store in the page itself but this can be overwritten with data? So can't store there.
+Have to store somewhere else. Need every physical page to contain a reference count.
+Each page is 2^12 = 4096 bytes.
+Can find somewhere in memory to map physical addresses to reference counts.
+Would need up to 2^20 = 1048576 bytes or 1 megabyte of space.
+Where to best put this?
+And when do we initialize it?
+May just be able to put it in the kernel data.
+We still need to disable writing and signal that we have multiple processes pointing to a page: Need to set certain bits in the PTE.
+
+1. Set correct bits in PTE(non-writable and multiple-reference) in page fork. - Done
+   1a. Set corrent bits in PTE flag in page initialization(multiple-reference = false) - (Maybe needed?)
+2. Copy PTE but point to old physical pages - Done
+3. Initialize Reference Counter - Done. In Kalloc.c and in kinit1.
+4. Handle Incrementing Reference Count every time we fork. - Done
+5. Handle trap where we try to write to something with multiple references by copying it then and decreasing the reference count. If it only has a single reference(ref_count = 0), make it writeable again.
+6. Handle freeing pages(decrease reference unless there is only one reference to the page(ref count = 0) in which case we actually free it)
+   (In deallocuvm) - Done.
+
+Part 2:
+Allocate the zero page when we call allocuvm for the first time and make it unwritable, and mark the PTE as the zero page (Bit 10).
+On calling allocuvm, set all new page pointers to the existing zero page and mark the PTE as the zero page (Bit 10) and make them unwritable.
+In our trap handler, check that we are trying to write to the zero page.
+If we are trying to write to the zero page, allocate a new page and point the PTE to it.
+If its both copy on write and zero, we just get a new page and don't have to zero it.
